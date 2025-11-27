@@ -48,6 +48,7 @@ build_arch() {
     
     local LDFLAGS_ARCH="$LDFLAGS -lrt -lm -ldl $M_FLAG -flto -shared -static-libgcc -static-libstdc++"
     LDFLAGS_ARCH="$LDFLAGS_ARCH -Wl,--version-script=version-script"
+    LDFLAGS_ARCH="$LDFLAGS_ARCH -Wl,--allow-shlib-undefined"
     
     # Determine FunctionRoute library path
     local FUNCTIONROUTE_LIB
@@ -92,8 +93,8 @@ build_arch() {
         TIER2_LIB=""
     fi
     
-    local OBJS_ARCH="-L${LIB_PATH} -ltier0_srv -lvstdlib_srv"
-    OBJS_ARCH="$OBJS_ARCH ${TIER1_LIB}"
+    
+    local OBJS_ARCH="${TIER1_LIB}"
     if [ -n "${TIER2_LIB}" ]; then
         OBJS_ARCH="$OBJS_ARCH ${TIER2_LIB}"
     fi
@@ -108,9 +109,17 @@ build_arch() {
         fi
     fi
     
+    # Add RPATH to find tier0/vstdlib libraries at runtime
+    # These are provided by the TF2 engine/server
+    if [ "$ARCH" = "x86_64" ]; then
+        LDFLAGS_ARCH="$LDFLAGS_ARCH -Wl,-rpath,/home/tf2/server/bin/linux64:/home/tf2/server/bin"
+    else
+        LDFLAGS_ARCH="$LDFLAGS_ARCH -Wl,-rpath,/home/tf2/server/bin:/home/tf2/server/bin/linux32"
+    fi
+    
     set -x
     g++ $CXXFLAGS_ARCH -c -o srctvplus_${ARCH}.o srctvplus.cpp
-    gcc $CXXFLAGS_ARCH $LDFLAGS_ARCH -o srctvplus_${ARCH}.so srctvplus_${ARCH}.o $OBJS_ARCH
+    gcc $CXXFLAGS_ARCH $LDFLAGS_ARCH -o srctvplus_${ARCH}.so srctvplus_${ARCH}.o $OBJS_ARCH -L${LIB_PATH} -ltier0_srv -lvstdlib_srv
     set +x
     
     echo "✓ Built srctvplus_${ARCH}.so"

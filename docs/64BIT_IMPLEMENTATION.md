@@ -249,6 +249,32 @@ $ ln -sf srctvplus_x86_64.so srctvplus.so
 
 ## Technical Details
 
+### Symbol Resolution
+
+The plugin uses a two-stage symbol resolution strategy:
+
+1. **Build-time**: Compiler links against the SDK tier1/tier2/mathlib static archives. These contain most of the implementations.
+2. **Runtime**: The TF2 engine provides `libtier0_srv.so` and `libvstdlib_srv.so` which contain engine-specific implementations like `KeyValuesSystem()`.
+
+#### KeyValuesSystem and RPATH
+
+`KeyValuesSystem` is a global function pointer that provides access to the Source Engine's key-value data system. It must be resolved at runtime from `libvstdlib_srv.so` provided by the engine.
+
+To enable this:
+- **Linking flag**: `-Wl,--allow-shlib-undefined` - Allows undefined symbols that will be resolved at runtime
+- **RPATH embedding**: Tells the runtime linker where to find `libtier0_srv.so` and `libvstdlib_srv.so` on the server
+
+Example RUNPATH inspection:
+```bash
+$ readelf -d srctvplus_x86_64.so | grep RUNPATH
+ 0x000000000000001d (RUNPATH)  Library runpath: [/home/tf2/server/bin/linux64:/home/tf2/server/bin]
+
+$ readelf -d srctvplus_i486.so | grep RUNPATH
+ 0x0000001d (RUNPATH)          Library runpath: [/home/tf2/server/bin:/home/tf2/server/bin/linux32]
+```
+
+When the TF2 server loads the plugin, the runtime linker uses this RPATH to locate the required libraries in the server's bin directory.
+
 ### Compiler Flags
 
 #### 32-bit Build
@@ -271,23 +297,37 @@ $ ln -sf srctvplus_x86_64.so srctvplus.so
 
 ### Library Linking
 
+The plugin links against the Source Engine tier1/tier2 libraries statically, but resolves engine-provided symbols (like `KeyValuesSystem`) at runtime. This is achieved through:
+
+1. **Static Linking** (compiled into the binary):
+   - `tier1.a` / `tier1_i486.a` - Core Source Engine utilities
+   - `tier2.a` - Higher-level utilities (64-bit only)
+   - `mathlib.a` / `mathlib_i486.a` - Math library
+   - `FunctionRoute.a` / `FunctionRoute_x86_64.a` - Function hooking
+
+2. **Dynamic Linking** (resolved at runtime from engine):
+   - `libtier0_srv.so` - Tier 0 memory/system utilities
+   - `libvstdlib_srv.so` - Standard library interfaces (includes `KeyValuesSystem`)
+
 #### 32-bit
 ```
 -L vendor/sdk/lib/public/linux
--ltier0_srv -lvstdlib_srv (dynamic)
+-ltier0_srv -lvstdlib_srv               (resolved at runtime via RPATH)
 vendor/sdk/lib/public/linux/tier1_i486.a (static)
 vendor/sdk/lib/public/linux/mathlib_i486.a (static)
 vendor/tftrue/FunctionRoute/FunctionRoute.a (static)
+RPATH: /home/tf2/server/bin:/home/tf2/server/bin/linux32
 ```
 
 #### 64-bit
 ```
 -L vendor/sdk/lib/public/linux64
--ltier0_srv -lvstdlib_srv (dynamic)
+-ltier0_srv -lvstdlib_srv               (resolved at runtime via RPATH)
 vendor/sdk/lib/public/linux64/tier1.a (static)
 vendor/sdk/lib/public/linux64/tier2.a (static)
 vendor/sdk/lib/public/linux64/mathlib.a (static)
 vendor/tftrue/FunctionRoute/FunctionRoute_x86_64.a (static)
+RPATH: /home/tf2/server/bin/linux64:/home/tf2/server/bin
 ```
 
 ### Binary Sizes
@@ -340,6 +380,45 @@ This indicates you're trying to link 32-bit and 64-bit objects. Ensure:
 - `FunctionRoute_x86_64.a` exists for 64-bit builds
 - Correct SDK libraries are used (check library paths in build.sh)
 
+### Plugin Fails to Load with "undefined symbol" Errors
+
+If you see errors like:
+```
+undefined symbol: KeyValuesSystem
+symbol not found: libtier0_srv.so
+```
+
+This is a library resolution issue. Verify:
+
+1. **Binary was built correctly** with RPATH embedded:
+   ```bash
+   readelf -d srctvplus_x86_64.so | grep RUNPATH
+   ```
+   Should show: `[/home/tf2/server/bin/linux64:/home/tf2/server/bin]` for 64-bit
+
+2. **Libraries exist on the server**:
+   ```bash
+   ls -l /home/tf2/server/bin/linux64/libtier0_srv.so
+   ls -l /home/tf2/server/bin/linux64/libvstdlib_srv.so
+   # OR
+   ls -l /home/tf2/server/bin/libtier0_srv.so
+   ls -l /home/tf2/server/bin/libvstdlib_srv.so
+   ```
+
+3. **Correct binary architecture**:
+   ```bash
+   readelf -h srctvplus.so | grep Machine
+   # Should show: Advanced Micro Devices X86-64 (for 64-bit)
+   # Or: Intel 80386 (for 32-bit)
+   ```
+
+4. **Server binary matches plugin**:
+   ```bash
+   # For 64-bit server
+   readelf -h /home/tf2/server/tf_srv | grep Machine
+   # Should match the plugin architecture
+   ```
+
 ### Server Won't Load Plugin
 
 Check the server logs:
@@ -352,6 +431,7 @@ Ensure:
 - Correct binary architecture matches server (use `readelf -h`)
 - `srctvplus.vdf` is present and correctly formatted
 - Plugin is in correct directory: `tf/addons/` or `tf/custom/srctvplus/addons/`
+- TF2 engine libraries are accessible via RPATH
 
 ### Symbol Not Found Errors
 
@@ -359,6 +439,7 @@ This may indicate:
 - Incompatible SDK version
 - Missing shared libraries (libtier0_srv.so, libvstdlib_srv.so)
 - Incorrect compiler flags during build
+- RPATH not embedded in binary
 
 ## Contact & Contributions
 
