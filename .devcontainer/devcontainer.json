@@ -1,0 +1,22 @@
+{
+  "name": "SrcTV+ Development",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.makefile-tools"
+      ]
+    }
+  },
+  "postCreateCommand": "git config --global --add safe.directory /workspaces/srctvplus/vendor/sdk && git config --global --add safe.directory /workspaces/srctvplus/vendor/tftrue && git submodule init && git submodule update",
+  "forwardPorts": [],
+  "remoteUser": "root"
+}
