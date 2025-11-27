@@ -1,5 +1,7 @@
 srctvplus.o
 srctvplus.so
+srctvplus_*.o
+srctvplus_*.so
 Release/
 Debug/
 .vs/

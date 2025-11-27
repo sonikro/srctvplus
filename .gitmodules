@@ -1,6 +1,6 @@
 [submodule "vendor/tftrue"]
 	path = vendor/tftrue
-	url = https://github.com/AnAkkk/TFTrue
+	url = git@github.com:sonikro/TFTrue.git
 [submodule "vendor/sdk"]
 	path = vendor/sdk
 	url = https://github.com/alliedmodders/hl2sdk

@@ -10,6 +10,21 @@ Installation
 Copy `srctvplus.so`(Linux) or `srctvplus.dll`(Windows) along with `srctvplus.vdf`
 into `<TF2>/tf/custom/srctvplus/addons/` or `<TF2>/tf/addons/`.
 
+### Multi-architecture support
+
+The build script now creates architecture-specific binaries:
+- `srctvplus_i486.so` - 32-bit version for legacy 32-bit servers
+- `srctvplus_x86_64.so` - 64-bit version for modern 64-bit servers
+
+After building, the script creates a `srctvplus.so` symlink pointing to the appropriate version.
+For servers with only one architecture available, simply copy `srctvplus.so` to your server.
+
+If both are built and you need to switch architectures, use:
+```
+ln -sf srctvplus_i486.so srctvplus.so     # For 32-bit servers
+ln -sf srctvplus_x86_64.so srctvplus.so   # For 64-bit servers
+```
+
 ### Network traffic usage
 
 The plugin works by having the game server send the SrcTV clients more data,
@@ -20,12 +35,14 @@ to set at least `tv_maxrate 20000` or if possible, `tv_maxrate 0`.
 Compiling
 ---------
 
-### Linux:
+### Linux (32-bit and 64-bit):
 ```
 $ git submodule init
 $ git submodule update
 $ ./build.sh
 ```
+
+This will build both `srctvplus_i486.so` (32-bit) and `srctvplus_x86_64.so` (64-bit).
 
 ### Windows:
 Open srctvplus.sln in Visual Studio 2017. Select 'Release' configuration.
