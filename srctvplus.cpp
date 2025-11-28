@@ -91,53 +91,97 @@ typedef void* (*SendTableProxyFn)(
 
 // Calls a sendproxy and adds the HLTV pseudo client to the returned recipients list
 void* SendProxy_IncludeHLTV(SendTableProxyFn fn, const SendProp* pProp, const void* pStructBase, const void* pData, CSendProxyRecipients* pRecipients, int objectID) {
+  if (!fn) {
+    Warning("[srctv+] WARNING: SendProxy_IncludeHLTV called with null function pointer\n");
+    return nullptr;
+  }
+  
+  if (!pRecipients) {
+    Warning("[srctv+] WARNING: SendProxy_IncludeHLTV called with null recipients\n");
+    return nullptr;
+  }
+
   const char* ret = (const char*)fn(pProp, pStructBase, pData, pRecipients, objectID);
+  
   if (ret) {
-    if (engine->IsDedicatedServer()) {
-      // Normal dedicated server
-      auto server = g_pHLTVDirector->GetHLTVServer();
-      if (server) {
-        auto slot = server->GetHLTVSlot();
-        if (slot >= 0) {
-          pRecipients->m_Bits.Set(slot);
+    if (engine) {
+      if (engine->IsDedicatedServer()) {
+        // Normal dedicated server
+        if (g_pHLTVDirector) {
+          auto server = g_pHLTVDirector->GetHLTVServer();
+          if (server) {
+            auto slot = server->GetHLTVSlot();
+            if (slot >= 0) {
+              pRecipients->m_Bits.Set(slot);
+            } else {
+              Warning("[srctv+] WARNING: HLTV slot is invalid (%d)\n", slot);
+            }
+          } else {
+            Warning("[srctv+] WARNING: GetHLTVServer returned null\n");
+          }
+        } else {
+          Warning("[srctv+] WARNING: g_pHLTVDirector is null in SendProxy_IncludeHLTV\n");
         }
+      } else {
+        // Listen server
+        pRecipients->m_Bits.Set(0);
       }
     } else {
-      // Listen server
-      pRecipients->m_Bits.Set(0);
+      Warning("[srctv+] WARNING: engine is null in SendProxy_IncludeHLTV\n");
     }
+  } else {
+    Warning("[srctv+] DEBUG: SendProxy returned null\n");
   }
   return (void*)ret;
 }
 
 void* SrcTVPlus::SendProxy_SendLocalDataTable(const SendProp *pProp, const void *pStructBase, const void *pData, CSendProxyRecipients *pRecipients, int objectID) {
-  return SendProxy_IncludeHLTV(g_Plugin.m_sendLocalDataTableHook.CallOriginalFunction<SendTableProxyFn>(), pProp, pStructBase, pData, pRecipients, objectID);
+  auto origFn = g_Plugin.m_sendLocalDataTableHook.CallOriginalFunction<SendTableProxyFn>();
+  if (!origFn) {
+    Error("[srctv+] ERROR: SendProxy_SendLocalDataTable - original function is null!\n");
+    return nullptr;
+  }
+  return SendProxy_IncludeHLTV(origFn, pProp, pStructBase, pData, pRecipients, objectID);
 }
 
 void* SrcTVPlus::SendProxy_SendLocalWeaponDataTable(const SendProp *pProp, const void *pStructBase, const void *pData, CSendProxyRecipients *pRecipients, int objectID) {
-  return SendProxy_IncludeHLTV(g_Plugin.m_sendLocalWeaponDataTableHook.CallOriginalFunction<SendTableProxyFn>(), pProp, pStructBase, pData, pRecipients, objectID);
+  auto origFn = g_Plugin.m_sendLocalWeaponDataTableHook.CallOriginalFunction<SendTableProxyFn>();
+  if (!origFn) {
+    Error("[srctv+] ERROR: SendProxy_SendLocalWeaponDataTable - original function is null!\n");
+    return nullptr;
+  }
+  return SendProxy_IncludeHLTV(origFn, pProp, pStructBase, pData, pRecipients, objectID);
 }
 
 void* SrcTVPlus::SendProxy_SendLocalActiveWeaponDataTable(const SendProp *pProp, const void *pStructBase, const void *pData, CSendProxyRecipients *pRecipients, int objectID) {
-  return SendProxy_IncludeHLTV(g_Plugin.m_sendLocalActiveWeaponDataTableHook.CallOriginalFunction<SendTableProxyFn>(), pProp, pStructBase, pData, pRecipients, objectID);
+  auto origFn = g_Plugin.m_sendLocalActiveWeaponDataTableHook.CallOriginalFunction<SendTableProxyFn>();
+  if (!origFn) {
+    Error("[srctv+] ERROR: SendProxy_SendLocalActiveWeaponDataTable - original function is null!\n");
+    return nullptr;
+  }
+  return SendProxy_IncludeHLTV(origFn, pProp, pStructBase, pData, pRecipients, objectID);
 }
 
 // Loads events in a given resource file and inserts them into target set.
 bool load_events(const char* filename, std::set<std::string>& target) {
+  Warning("[srctv+] DEBUG: Loading events from %s\n", filename);
   auto kv = new KeyValues(filename);
   KeyValues::AutoDelete autodelete_kv(kv);
 
   if(!kv->LoadFromFile(g_pFileSystem, filename, "GAME")) {
-    Warning("Could not load events from %s\n", filename);
+    Warning("[srctv+] WARNING: Could not load events from %s\n", filename);
     return false;
   }
 
+  int count = 0;
   KeyValues* subkey = kv->GetFirstSubKey();
   while(subkey) {
     target.insert(subkey->GetName());
+    count++;
     subkey = subkey->GetNextKey();
   }
 
+  Warning("[srctv+] DEBUG: Loaded %d events from %s\n", count, filename);
   return true;
 }
 
@@ -145,17 +189,30 @@ bool load_events(const char* filename, std::set<std::string>& target) {
 // events available in the modevents, gameevents, and serverevents resource files.
 typedef const char**(*IHLTVDirector_GetModEvents_t)(void *thisPtr);
 const char** SrcTVPlus::GetModEvents(IHLTVDirector* director) {
+  Warning("[srctv+] DEBUG: GetModEvents hook called\n");
+  
   static std::set<std::string> events;
   static std::vector<const char*> list;
 
   if(!list.empty()) {
+    Warning("[srctv+] DEBUG: Returning cached event list (%zu events)\n", list.size());
     return list.data();
   }
 
+  Warning("[srctv+] DEBUG: Building event list...\n");
   auto orig = g_Plugin.m_directorHook.CallOriginalFunction<IHLTVDirector_GetModEvents_t>()(director);
+  
+  if (!orig) {
+    Error("[srctv+] ERROR: GetModEvents - original function returned null!\n");
+    return nullptr;
+  }
+  
+  int origCount = 0;
   for(int i = 0; orig[i] != nullptr; i++) {
     events.insert(orig[i]);
+    origCount++;
   }
+  Warning("[srctv+] DEBUG: Original GetModEvents returned %d events\n", origCount);
 
   load_events("resource/modevents.res", events);
   load_events("resource/gameevents.res", events);
@@ -167,6 +224,7 @@ const char** SrcTVPlus::GetModEvents(IHLTVDirector* director) {
   list.push_back(nullptr);
   list.shrink_to_fit();
 
+  Warning("[srctv+] DEBUG: GetModEvents returning %zu total events\n", list.size());
   return list.data();
 }
 
@@ -243,58 +301,98 @@ void* search_interface(CreateInterfaceFn factory, const char* name) {
 }
 
 bool SrcTVPlus::Load(CreateInterfaceFn interfaceFactory, CreateInterfaceFn gameServerFactory) {
-  Warning("[srctv+] Loading...\n");
+  Warning("[srctv+] ========== LOAD START ==========");
+  Warning("[srctv+] Loading plugin...\n");
 
+  Warning("[srctv+] Searching for INTERFACEVERSION_SERVERGAMEDLL (%s)...\n", INTERFACEVERSION_SERVERGAMEDLL);
   g_pGameDLL = (IServerGameDLL*)search_interface(gameServerFactory, INTERFACEVERSION_SERVERGAMEDLL);
   if(!g_pGameDLL) {
-    Error("[srctv+] Could not find game DLL interface, aborting load\n");
+    Error("[srctv+] ERROR: Could not find game DLL interface, aborting load\n");
     return false;
   }
+  Warning("[srctv+] ✓ Game DLL interface loaded at %p\n", (void*)g_pGameDLL);
 
+  Warning("[srctv+] Searching for INTERFACEVERSION_VENGINESERVER (%s)...\n", INTERFACEVERSION_VENGINESERVER);
   engine = (IVEngineServer*)search_interface(interfaceFactory, INTERFACEVERSION_VENGINESERVER);
   if (!engine) {
-    Error("[srctv+] Could not find engine interface, aborting load\n");
+    Error("[srctv+] ERROR: Could not find engine interface, aborting load\n");
     return false;
   }
+  Warning("[srctv+] ✓ Engine interface loaded at %p\n", (void*)engine);
 
+  Warning("[srctv+] Searching for FILESYSTEM_INTERFACE_VERSION (%s)...\n", FILESYSTEM_INTERFACE_VERSION);
   g_pFileSystem = (IFileSystem*)search_interface(interfaceFactory, FILESYSTEM_INTERFACE_VERSION);
   if(!g_pFileSystem) {
-    Error("[srctv+] Could not find filesystem interface, aborting load\n");
+    Error("[srctv+] ERROR: Could not find filesystem interface, aborting load\n");
     return false;
   }
+  Warning("[srctv+] ✓ FileSystem interface loaded at %p\n", (void*)g_pFileSystem);
 
-  // HLTV director mod events hook, for sending all events to the HLTV client
+  Warning("[srctv+] Searching for INTERFACEVERSION_HLTVDIRECTOR (%s)...\n", INTERFACEVERSION_HLTVDIRECTOR);
   g_pHLTVDirector = (IHLTVDirector*)search_interface(gameServerFactory, INTERFACEVERSION_HLTVDIRECTOR);
   if(!g_pHLTVDirector) {
-    Error("[srctv+] Could not find SrcTV director, aborting load\n");
+    Error("[srctv+] ERROR: Could not find SrcTV director, aborting load\n");
     return false;
   }
-  m_directorHook.RouteVirtualFunction(g_pHLTVDirector, &IHLTVDirector::GetModEvents, SrcTVPlus::GetModEvents);
+  Warning("[srctv+] ✓ HLTV Director interface loaded at %p\n", (void*)g_pHLTVDirector);
 
-  // Hook various SendProxies so they also send their data to the HLTV pseudo client.
+  Warning("[srctv+] Attempting to hook IHLTVDirector::GetModEvents...\n");
+  if (!m_directorHook.RouteVirtualFunction(g_pHLTVDirector, &IHLTVDirector::GetModEvents, SrcTVPlus::GetModEvents)) {
+    Error("[srctv+] ERROR: Failed to hook IHLTVDirector::GetModEvents\n");
+    return false;
+  }
+  Warning("[srctv+] ✓ GetModEvents hook installed\n");
 
+  Warning("[srctv+] ========== HOOK SETUP START ==========");
+  Warning("[srctv+] Hooking SendProxies for HLTV data propagation...\n");
+
+  Warning("[srctv+] [1/3] Looking up CBasePlayer.localdata...\n");
   auto prop = GetSendProp("CBasePlayer", "localdata");
   if(!prop) {
-    Error("[srctv+] Could not find CBasePlayer prop 'localdata'\n");
+    Error("[srctv+] ERROR: Could not find CBasePlayer prop 'localdata'\n");
     return false;
   }
-  m_sendLocalDataTableHook.RouteFunction((void*)prop->GetDataTableProxyFn(), (void*)&SrcTVPlus::SendProxy_SendLocalDataTable);
+  Warning("[srctv+]   ✓ Found prop at %p\n", (void*)prop);
+  void* proxyFn = (void*)prop->GetDataTableProxyFn();
+  Warning("[srctv+]   ✓ Proxy function at %p\n", proxyFn);
+  if (!m_sendLocalDataTableHook.RouteFunction(proxyFn, (void*)&SrcTVPlus::SendProxy_SendLocalDataTable)) {
+    Error("[srctv+] ERROR: Failed to hook SendProxy_SendLocalDataTable\n");
+    return false;
+  }
+  Warning("[srctv+]   ✓ Hook installed successfully\n");
 
+  Warning("[srctv+] [2/3] Looking up CBaseCombatWeapon.LocalWeaponData...\n");
   prop = GetSendProp("CBaseCombatWeapon", "LocalWeaponData");
   if(!prop) {
-    Error("[srctv+] Could not find CBaseCombatWeapon prop 'LocalWeaponData'\n");
+    Error("[srctv+] ERROR: Could not find CBaseCombatWeapon prop 'LocalWeaponData'\n");
     return false;
   }
-  m_sendLocalWeaponDataTableHook.RouteFunction((void*)prop->GetDataTableProxyFn(), (void*)&SrcTVPlus::SendProxy_SendLocalWeaponDataTable);
+  Warning("[srctv+]   ✓ Found prop at %p\n", (void*)prop);
+  proxyFn = (void*)prop->GetDataTableProxyFn();
+  Warning("[srctv+]   ✓ Proxy function at %p\n", proxyFn);
+  if (!m_sendLocalWeaponDataTableHook.RouteFunction(proxyFn, (void*)&SrcTVPlus::SendProxy_SendLocalWeaponDataTable)) {
+    Error("[srctv+] ERROR: Failed to hook SendProxy_SendLocalWeaponDataTable\n");
+    return false;
+  }
+  Warning("[srctv+]   ✓ Hook installed successfully\n");
 
+  Warning("[srctv+] [3/3] Looking up CBaseCombatWeapon.LocalActiveWeaponData...\n");
   prop = GetSendProp("CBaseCombatWeapon", "LocalActiveWeaponData");
   if(!prop) {
-    Error("[srctv+] Could not find CBaseCombatWeapon prop 'LocalActiveWeaponData'\n");
+    Error("[srctv+] ERROR: Could not find CBaseCombatWeapon prop 'LocalActiveWeaponData'\n");
     return false;
   }
-  m_sendLocalActiveWeaponDataTableHook.RouteFunction((void*)prop->GetDataTableProxyFn(), (void*)&SrcTVPlus::SendProxy_SendLocalActiveWeaponDataTable);
+  Warning("[srctv+]   ✓ Found prop at %p\n", (void*)prop);
+  proxyFn = (void*)prop->GetDataTableProxyFn();
+  Warning("[srctv+]   ✓ Proxy function at %p\n", proxyFn);
+  if (!m_sendLocalActiveWeaponDataTableHook.RouteFunction(proxyFn, (void*)&SrcTVPlus::SendProxy_SendLocalActiveWeaponDataTable)) {
+    Error("[srctv+] ERROR: Failed to hook SendProxy_SendLocalActiveWeaponDataTable\n");
+    return false;
+  }
+  Warning("[srctv+]   ✓ Hook installed successfully\n");
 
-  Warning("[srctv+] Loaded!\n");
+  Warning("[srctv+] ========== LOAD COMPLETE ==========");
+  Warning("[srctv+] ✓ Plugin loaded successfully!\n");
   return true;
 }
 
