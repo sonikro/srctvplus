@@ -91,47 +91,30 @@ typedef void* (*SendTableProxyFn)(
 
 // Calls a sendproxy and adds the HLTV pseudo client to the returned recipients list
 void* SendProxy_IncludeHLTV(SendTableProxyFn fn, const SendProp* pProp, const void* pStructBase, const void* pData, CSendProxyRecipients* pRecipients, int objectID) {
-  if (!fn) {
-    Warning("[srctv+] WARNING: SendProxy_IncludeHLTV called with null function pointer\n");
-    return nullptr;
-  }
-  
-  if (!pRecipients) {
-    Warning("[srctv+] WARNING: SendProxy_IncludeHLTV called with null recipients\n");
+  if (!fn || !pRecipients) {
     return nullptr;
   }
 
   const char* ret = (const char*)fn(pProp, pStructBase, pData, pRecipients, objectID);
   
-  if (ret) {
-    if (engine) {
-      if (engine->IsDedicatedServer()) {
-        // Normal dedicated server
-        if (g_pHLTVDirector) {
-          auto server = g_pHLTVDirector->GetHLTVServer();
-          if (server) {
-            auto slot = server->GetHLTVSlot();
-            if (slot >= 0) {
-              pRecipients->m_Bits.Set(slot);
-            } else {
-              Warning("[srctv+] WARNING: HLTV slot is invalid (%d)\n", slot);
-            }
-          } else {
-            Warning("[srctv+] WARNING: GetHLTVServer returned null\n");
+  if (ret && engine) {
+    if (engine->IsDedicatedServer()) {
+      // Normal dedicated server
+      if (g_pHLTVDirector) {
+        auto server = g_pHLTVDirector->GetHLTVServer();
+        if (server) {
+          auto slot = server->GetHLTVSlot();
+          if (slot >= 0) {
+            pRecipients->m_Bits.Set(slot);
           }
-        } else {
-          Warning("[srctv+] WARNING: g_pHLTVDirector is null in SendProxy_IncludeHLTV\n");
         }
-      } else {
-        // Listen server
-        pRecipients->m_Bits.Set(0);
       }
     } else {
-      Warning("[srctv+] WARNING: engine is null in SendProxy_IncludeHLTV\n");
+      // Listen server
+      pRecipients->m_Bits.Set(0);
     }
-  } else {
-    Warning("[srctv+] DEBUG: SendProxy returned null\n");
   }
+  
   return (void*)ret;
 }
 
@@ -164,24 +147,19 @@ void* SrcTVPlus::SendProxy_SendLocalActiveWeaponDataTable(const SendProp *pProp,
 
 // Loads events in a given resource file and inserts them into target set.
 bool load_events(const char* filename, std::set<std::string>& target) {
-  Warning("[srctv+] DEBUG: Loading events from %s\n", filename);
   auto kv = new KeyValues(filename);
   KeyValues::AutoDelete autodelete_kv(kv);
 
   if(!kv->LoadFromFile(g_pFileSystem, filename, "GAME")) {
-    Warning("[srctv+] WARNING: Could not load events from %s\n", filename);
     return false;
   }
 
-  int count = 0;
   KeyValues* subkey = kv->GetFirstSubKey();
   while(subkey) {
     target.insert(subkey->GetName());
-    count++;
     subkey = subkey->GetNextKey();
   }
 
-  Warning("[srctv+] DEBUG: Loaded %d events from %s\n", count, filename);
   return true;
 }
 
@@ -189,30 +167,31 @@ bool load_events(const char* filename, std::set<std::string>& target) {
 // events available in the modevents, gameevents, and serverevents resource files.
 typedef const char**(*IHLTVDirector_GetModEvents_t)(void *thisPtr);
 const char** SrcTVPlus::GetModEvents(IHLTVDirector* director) {
-  Warning("[srctv+] DEBUG: GetModEvents hook called\n");
-  
   static std::set<std::string> events;
   static std::vector<const char*> list;
 
   if(!list.empty()) {
-    Warning("[srctv+] DEBUG: Returning cached event list (%zu events)\n", list.size());
     return list.data();
   }
 
-  Warning("[srctv+] DEBUG: Building event list...\n");
-  auto orig = g_Plugin.m_directorHook.CallOriginalFunction<IHLTVDirector_GetModEvents_t>()(director);
+  auto origFunc = g_Plugin.m_directorHook.CallOriginalFunction<IHLTVDirector_GetModEvents_t>();
+  if (!origFunc) {
+    Error("[srctv+] ERROR: GetModEvents - CallOriginalFunction returned null!\n");
+    return nullptr;
+  }
   
+  auto orig = origFunc(director);
   if (!orig) {
     Error("[srctv+] ERROR: GetModEvents - original function returned null!\n");
     return nullptr;
   }
   
-  int origCount = 0;
-  for(int i = 0; orig[i] != nullptr; i++) {
+  for(int i = 0; i < 1000; i++) {  // Safety limit
+    if (orig[i] == nullptr) {
+      break;
+    }
     events.insert(orig[i]);
-    origCount++;
   }
-  Warning("[srctv+] DEBUG: Original GetModEvents returned %d events\n", origCount);
 
   load_events("resource/modevents.res", events);
   load_events("resource/gameevents.res", events);
@@ -224,51 +203,93 @@ const char** SrcTVPlus::GetModEvents(IHLTVDirector* director) {
   list.push_back(nullptr);
   list.shrink_to_fit();
 
-  Warning("[srctv+] DEBUG: GetModEvents returning %zu total events\n", list.size());
   return list.data();
 }
 
 // Finds a send prop within a send table
 SendProp* GetSendPropInTable(SendTable* tbl, const char* propname) {
-  for(int i = 0; i < tbl->GetNumProps(); i++) {
+  if (!tbl) {
+    return nullptr;
+  }
+  
+  int numProps = tbl->GetNumProps();
+  
+  for(int i = 0; i < numProps; i++) {
     auto prop = tbl->GetProp(i);
+    if (!prop) {
+      Warning("[srctv+] WARNING: GetProp(%d) returned null\n", i);
+      continue;
+    }
 
     if(!propname) {
+      Warning("[srctv+] WARNING: propname became null mid-search\n");
       break;
     }
 
-    if(strcmp(prop->GetName(), propname) != 0)
+    const char* propGetName = prop->GetName();
+    if (!propGetName) {
+      Warning("[srctv+] WARNING: prop->GetName() returned null at index %d\n", i);
+      continue;
+    }
+    
+    Warning("[srctv+] DEBUG:   Prop[%d] = %s (comparing to %s)\n", i, propGetName, propname);
+    if(strcmp(propGetName, propname) != 0)
       continue;
 
     propname = strtok(nullptr, ".");
+    Warning("[srctv+] DEBUG:   strtok returned: %p\n", (void*)propname);
     if(propname) {
       auto child = prop->GetDataTable();
-      if(!child) continue;
+      if(!child) {
+        Warning("[srctv+] DEBUG:   No child table for prop %s\n", prop->GetName());
+        continue;
+      }
+      Warning("[srctv+] DEBUG:   Recursing into child table for %s\n", propname);
       auto ret = GetSendPropInTable(child, propname);
       if(ret) return ret;
     } else {
+      Warning("[srctv+] DEBUG: Found prop %s at %p\n", prop->GetName(), (void*)prop);
       return prop;
     }
   }
 
+  Warning("[srctv+] DEBUG: GetSendPropInTable returning nullptr\n");
   return nullptr;
 }
 
 // Finds a send prop within a send table, given the class name
 SendProp* GetSendProp(const char* tblname, const char* propname) {
+  Warning("[srctv+] DEBUG: GetSendProp(tblname=\"%s\", propname=\"%s\")\n", tblname, propname);
+  if (!g_pGameDLL) {
+    Warning("[srctv+] WARNING: g_pGameDLL is null in GetSendProp\n");
+    return nullptr;
+  }
+  
   SendTable* tbl = nullptr;
-  for(ServerClass* cls = g_pGameDLL->GetAllServerClasses(); cls != nullptr; cls = cls->m_pNext) {
+  auto serverClasses = g_pGameDLL->GetAllServerClasses();
+  Warning("[srctv+] DEBUG: GetAllServerClasses returned %p\n", (void*)serverClasses);
+  
+  for(ServerClass* cls = serverClasses; cls != nullptr; cls = cls->m_pNext) {
+    if(!cls->m_pNetworkName) {
+      Warning("[srctv+] WARNING: cls->m_pNetworkName is null\n");
+      continue;
+    }
     if(strcmp(cls->m_pNetworkName, tblname) == 0) {
       tbl = cls->m_pTable;
+      Warning("[srctv+] DEBUG: Found table %s at %p\n", tblname, (void*)tbl);
       break;
     }
   }
+  
   if(!tbl) {
+    Warning("[srctv+] WARNING: GetSendProp could not find table %s\n", tblname);
     return nullptr;
   }
+  
   char name[256] = { 0 };
   strncpy(name, propname, sizeof(name)-1);
   propname = strtok(name, ".");
+  Warning("[srctv+] DEBUG: Calling GetSendPropInTable with first segment: %s\n", propname);
   return GetSendPropInTable(tbl, propname);
 }
 

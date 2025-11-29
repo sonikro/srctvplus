@@ -101,6 +101,13 @@ build_arch() {
     OBJS_ARCH="$OBJS_ARCH ${MATHLIB_LIB}"
     if [ $FUNCTIONROUTE_FOUND -eq 1 ]; then
         OBJS_ARCH="$OBJS_ARCH ${FUNCTIONROUTE_LIB}"
+        # Add Capstone library for 64-bit builds
+        if [ "$ARCH" = "x86_64" ]; then
+            CAPSTONE_LIB="${TFTRUEPATH}/../capstone/libcapstone.a"
+            if [ -f "$CAPSTONE_LIB" ]; then
+                OBJS_ARCH="$OBJS_ARCH ${CAPSTONE_LIB}"
+            fi
+        fi
     else
         if [ "$ARCH" = "x86_64" ]; then
             echo "Warning: FunctionRoute not found for 64-bit. Function hooking will not be available."

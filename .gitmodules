@@ -5,3 +5,7 @@
 	path = vendor/sdk
 	url = https://github.com/alliedmodders/hl2sdk
 	branch = tf2
+[submodule "vendor/capstone"]
+	path = vendor/capstone
+	url = https://github.com/capstone-engine/capstone.git
+	branch = 5.0.1

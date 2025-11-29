@@ -51,13 +51,27 @@ Compiling
 ---------
 
 ### Linux (32-bit and 64-bit):
-```
-$ git submodule init
-$ git submodule update
-$ ./build.sh
+
+**Prerequisites:**
+- GCC with 32-bit and 64-bit support
+
+**Build steps:**
+```bash
+# Initialize submodules (includes Capstone for 64-bit builds)
+git submodule update --init --recursive
+
+# Build Capstone
+cd vendor/capstone
+make
+cd ../..
+
+# Build the plugin
+./build.sh
 ```
 
 This will build both `srctvplus_i486.so` (32-bit) and `srctvplus_x86_64.so` (64-bit).
+
+**Note:** The 64-bit version uses Capstone for proper RIP-relative instruction relocation in function hooks.
 
 ### Windows:
 Open srctvplus.sln in Visual Studio 2017. Select 'Release' configuration.
@@ -70,5 +84,6 @@ This is included in
 Credits
 -------
 
-  - FunctionRoute(from TFTrue): Didrole
+  - FunctionRoute (from TFTrue): Didrole
+  - Capstone disassembler: Nguyen Anh Quynh
   - Source SDK: By Valve. Packaged by AlliedModders.
