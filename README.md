@@ -55,17 +55,22 @@ Compiling
 **Prerequisites:**
 - GCC with 32-bit and 64-bit support
 
-**Build steps:**
+**Build steps (execute in order):**
 ```bash
-# Initialize submodules (includes Capstone for 64-bit builds)
+# Step 1: Initialize submodules (includes Capstone for 64-bit builds)
 git submodule update --init --recursive
 
-# Build Capstone
+# Step 2: Build Capstone disassembler library
 cd vendor/capstone
 make
 cd ../..
 
-# Build the plugin
+# Step 3: Build the 64-bit FunctionRoute library
+cd vendor/tftrue/FunctionRoute
+./build_64bit.sh
+cd ../../..
+
+# Step 4: Build the plugin for both architectures
 ./build.sh
 ```
 
